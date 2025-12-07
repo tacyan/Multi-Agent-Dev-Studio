@@ -10,7 +10,9 @@ import {
   Layers,
   Download,
   MessageSquare,
-  Play
+  Play,
+  Mic,
+  MicOff
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { 
@@ -31,8 +33,10 @@ const extractFiles = (text: string): ProjectFile[] => {
   let match;
   while ((match = regex.exec(text)) !== null) {
     const path = match[1].trim();
+    // Normalize path to remove leading ./ or /
+    const cleanPath = path.replace(/^(\.\/|\/)+/, '');
     const content = match[2].trim();
-    files.push({ path, content, language: 'typescript' });
+    files.push({ path: cleanPath, content, language: 'typescript' });
   }
   return files;
 };
@@ -90,8 +94,11 @@ export default function App() {
     isRunning: false,
     activeTab: 'chat', 
   });
+  const [isListening, setIsListening] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const originalInputRef = useRef('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -111,8 +118,65 @@ export default function App() {
     }));
   };
 
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = navigator.language; // Use browser language
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    // Capture the current input so we can append to it
+    originalInputRef.current = userInput;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0].transcript)
+        .join('');
+      
+      // Append transcript to the text that was there before we started listening
+      const prefix = originalInputRef.current;
+      setUserInput(prefix + (prefix && transcript ? ' ' : '') + transcript);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+      setIsListening(false);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+         alert("Microphone access denied. Please allow microphone access in your browser settings to use voice input.");
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
   const handleSendMessage = async () => {
     if (!userInput.trim() || state.isRunning) return;
+
+    // Stop listening if sending
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
 
     const newMessage: ChatMessage = {
       role: 'user',
@@ -237,7 +301,8 @@ export default function App() {
     if (state.files.length === 0) return;
     const zip = new JSZip();
     state.files.forEach(file => {
-      const path = file.path.startsWith('/') ? file.path.slice(1) : file.path;
+      // Clean path just in case
+      const path = file.path.replace(/^(\.\/|\/)+/, '');
       zip.file(path, file.content);
     });
     
@@ -350,15 +415,31 @@ export default function App() {
                             }
                         }}
                         placeholder="Describe features or changes..."
-                        className="w-full bg-slate-800 border-slate-700 text-slate-200 placeholder-slate-500 rounded-xl pl-4 pr-12 py-3 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none resize-none h-24"
+                        className="w-full bg-slate-800 border-slate-700 text-slate-200 placeholder-slate-500 rounded-xl pl-4 pr-24 py-3 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none resize-none h-24"
                     />
-                    <button 
-                        onClick={handleSendMessage}
-                        disabled={!userInput.trim() || state.isRunning}
-                        className="absolute right-3 bottom-3 p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
-                    >
-                        {state.isRunning ? <Sparkles size={16} className="animate-spin" /> : <Send size={16} />}
-                    </button>
+                    
+                    <div className="absolute right-3 bottom-3 flex items-center gap-2">
+                        <button 
+                            onClick={toggleListening}
+                            disabled={state.isRunning}
+                            className={`p-2 rounded-lg transition-all duration-300 ${
+                                isListening 
+                                ? 'bg-red-500 text-white animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.5)]' 
+                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'
+                            }`}
+                            title={isListening ? "Stop recording" : "Start voice input"}
+                        >
+                            {isListening ? <MicOff size={16} /> : <Mic size={16} />}
+                        </button>
+
+                        <button 
+                            onClick={handleSendMessage}
+                            disabled={!userInput.trim() || state.isRunning}
+                            className="p-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
+                        >
+                            {state.isRunning ? <Sparkles size={16} className="animate-spin" /> : <Send size={16} />}
+                        </button>
+                    </div>
                 </div>
                 <div className="text-center mt-2">
                      <p className="text-[10px] text-slate-500">

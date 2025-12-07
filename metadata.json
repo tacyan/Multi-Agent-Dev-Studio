@@ -1,5 +1,7 @@
 {
   "name": "Multi-Agent Dev Studio",
   "description": "One prompt → a virtual AI dev team plans and scaffolds your project.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
